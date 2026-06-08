@@ -24,10 +24,19 @@ export class GeminiError extends Error {
 // Ordered fallback chain. 2.5-flash is best at the double-escaped LaTeX JSON;
 // 2.5-flash-lite is the failover when 2.5-flash is overloaded — it's lighter
 // and rarely congested at the same moment.
-const DEFAULT_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
-// Per-model cap. Kept well under Vercel's 60s function limit so that even a
-// primary timeout + one fallback stays inside budget (2 x 24s < 60s).
-const DEFAULT_TIMEOUT_MS = 24_000;
+// Fallback chain, best-quality first. When the whole chain is momentarily busy,
+// the route retries it within a time budget. More models = a far smaller chance
+// that every option is overloaded at the same instant.
+const DEFAULT_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-lite",
+];
+// Per-model cap. Small so the chain (and the route's bounded retries) stays well
+// under Vercel's 60s function limit. A 503/429 returns in ~1-2s anyway; this cap
+// only bites if a single model hangs.
+const DEFAULT_TIMEOUT_MS = 16_000;
 const ENDPOINT_BASE =
   "https://generativelanguage.googleapis.com/v1beta/models";
 const TRANSIENT = new Set([429, 500, 502, 503, 504]);
