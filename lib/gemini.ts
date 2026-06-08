@@ -25,7 +25,9 @@ export class GeminiError extends Error {
 // 2.5-flash-lite is the failover when 2.5-flash is overloaded — it's lighter
 // and rarely congested at the same moment.
 const DEFAULT_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
-const DEFAULT_TIMEOUT_MS = 55_000;
+// Per-model cap. Kept well under Vercel's 60s function limit so that even a
+// primary timeout + one fallback stays inside budget (2 x 24s < 60s).
+const DEFAULT_TIMEOUT_MS = 24_000;
 const ENDPOINT_BASE =
   "https://generativelanguage.googleapis.com/v1beta/models";
 const TRANSIENT = new Set([429, 500, 502, 503, 504]);
@@ -44,8 +46,6 @@ export interface GeminiResult {
   totalTokens: number;
   model: string;
 }
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function geminiGenerateJson(
   prompt: string,
@@ -73,108 +73,105 @@ export async function geminiGenerateJson(
       temperature: opts.temperature ?? 0.35,
       responseMimeType: "application/json",
       // A full paper + answer key is a large JSON payload — give it room so it
-      // never truncates mid-object (which surfaces as malformed JSON). Leaving
-      // "thinking" on (default) is deliberate: it reliably double-escapes the
-      // LaTeX backslashes, which thinking-off mode botches into invalid JSON.
+      // never truncates mid-object (which surfaces as malformed JSON).
       maxOutputTokens: 16384,
+      // Thinking OFF: it added 20-40s of latency (risking Vercel's 60s timeout)
+      // and burned output budget. The one thing it bought — correctly double-
+      // escaped LaTeX backslashes — is now handled deterministically by the
+      // backslash repair in parsePaper(), so we trade it for ~4x lower latency.
+      thinkingConfig: { thinkingBudget: 0 },
     },
   };
   const payloadStr = JSON.stringify(body);
 
   let lastErr: GeminiError | null = null;
 
-  // Try each model in turn; a transiently-overloaded model fails over to the
-  // next. Each model gets one quick in-place retry before failing over.
+  // Try each model once; a transiently-overloaded (503) or quota-limited (429)
+  // model fails over to the next. One shot per model keeps total latency bounded
+  // so the chain never blows Vercel's 60s function limit.
   for (const model of models) {
     const url = `${ENDPOINT_BASE}/${encodeURIComponent(
       model
     )}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      let res: Response;
-      try {
-        res = await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: payloadStr,
-          signal: controller.signal,
-        });
-      } catch (err) {
-        clearTimeout(timer);
-        if ((err as { name?: string })?.name === "AbortError") {
-          throw new GeminiError("TIMEOUT", `Gemini timed out after ${timeoutMs}ms`);
-        }
-        lastErr = new GeminiError("NETWORK", `Gemini network error: ${(err as Error).message}`);
-        break; // fail over to next model
-      }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: payloadStr,
+        signal: controller.signal,
+      });
+    } catch (err) {
       clearTimeout(timer);
-
-      // Hard auth failure — a different model won't help, surface immediately.
-      if (res.status === 401 || res.status === 403) {
-        throw new GeminiError("AUTH_FAIL", `Gemini auth failed (HTTP ${res.status})`, res.status);
+      if ((err as { name?: string })?.name === "AbortError") {
+        lastErr = new GeminiError("TIMEOUT", `Gemini ${model} timed out after ${timeoutMs}ms`);
+        continue; // fail over to next model
       }
-
-      if (TRANSIENT.has(res.status)) {
-        let detail = "";
-        try {
-          detail = ((await res.json()) as GeminiRestResponse).error?.message ?? "";
-        } catch {
-          /* ignore */
-        }
-        lastErr = new GeminiError(
-          res.status === 429 ? "RATE_LIMIT" : "BAD_RESPONSE",
-          `Gemini ${model} HTTP ${res.status}${detail ? `: ${detail}` : ""}`,
-          res.status
-        );
-        // One quick retry on the same model (overload spikes are brief), then
-        // fall through to the next model.
-        if (attempt === 0 && res.status !== 429) {
-          await sleep(1500);
-          continue;
-        }
-        break;
-      }
-
-      if (!res.ok) {
-        let detail = "";
-        try {
-          detail = ((await res.json()) as GeminiRestResponse).error?.message ?? "";
-        } catch {
-          /* ignore */
-        }
-        throw new GeminiError(
-          "BAD_RESPONSE",
-          `Gemini returned HTTP ${res.status}${detail ? `: ${detail}` : ""}`,
-          res.status
-        );
-      }
-
-      let json: GeminiRestResponse;
-      try {
-        json = (await res.json()) as GeminiRestResponse;
-      } catch {
-        throw new GeminiError("BAD_RESPONSE", "Gemini response was not valid JSON");
-      }
-
-      const text = json.candidates?.[0]?.content?.parts?.find(
-        (p) => typeof p.text === "string"
-      )?.text;
-      if (typeof text !== "string" || text.length === 0) {
-        lastErr = new GeminiError(
-          "BAD_RESPONSE",
-          `Gemini ${model} returned no text${
-            json.candidates?.[0]?.finishReason
-              ? ` (finishReason: ${json.candidates[0].finishReason})`
-              : ""
-          }`
-        );
-        break; // fail over to next model
-      }
-
-      return { text, totalTokens: json.usageMetadata?.totalTokenCount ?? 0, model };
+      lastErr = new GeminiError("NETWORK", `Gemini network error: ${(err as Error).message}`);
+      continue;
     }
+    clearTimeout(timer);
+
+    // Hard auth failure — a different model won't help, surface immediately.
+    if (res.status === 401 || res.status === 403) {
+      throw new GeminiError("AUTH_FAIL", `Gemini auth failed (HTTP ${res.status})`, res.status);
+    }
+
+    if (TRANSIENT.has(res.status)) {
+      let detail = "";
+      try {
+        detail = ((await res.json()) as GeminiRestResponse).error?.message ?? "";
+      } catch {
+        /* ignore */
+      }
+      lastErr = new GeminiError(
+        res.status === 429 ? "RATE_LIMIT" : "BAD_RESPONSE",
+        `Gemini ${model} HTTP ${res.status}${detail ? `: ${detail}` : ""}`,
+        res.status
+      );
+      continue; // fail over to next model
+    }
+
+    if (!res.ok) {
+      let detail = "";
+      try {
+        detail = ((await res.json()) as GeminiRestResponse).error?.message ?? "";
+      } catch {
+        /* ignore */
+      }
+      throw new GeminiError(
+        "BAD_RESPONSE",
+        `Gemini returned HTTP ${res.status}${detail ? `: ${detail}` : ""}`,
+        res.status
+      );
+    }
+
+    let json: GeminiRestResponse;
+    try {
+      json = (await res.json()) as GeminiRestResponse;
+    } catch {
+      throw new GeminiError("BAD_RESPONSE", "Gemini response was not valid JSON");
+    }
+
+    const text = json.candidates?.[0]?.content?.parts?.find(
+      (p) => typeof p.text === "string"
+    )?.text;
+    if (typeof text !== "string" || text.length === 0) {
+      lastErr = new GeminiError(
+        "BAD_RESPONSE",
+        `Gemini ${model} returned no text${
+          json.candidates?.[0]?.finishReason
+            ? ` (finishReason: ${json.candidates[0].finishReason})`
+            : ""
+        }`
+      );
+      continue; // fail over to next model
+    }
+
+    return { text, totalTokens: json.usageMetadata?.totalTokenCount ?? 0, model };
   }
 
   throw lastErr ?? new GeminiError("BAD_RESPONSE", "All Gemini models failed");

@@ -22,44 +22,40 @@ export async function POST(request: NextRequest) {
   }
 
   const prompt = buildPaperPrompt(brief);
-  let lastParseErr: unknown = null;
 
-  // The model occasionally botches LaTeX backslash escaping into invalid JSON.
-  // It's non-deterministic, so one clean retry recovers nearly every miss.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const { text, totalTokens } = await geminiGenerateJson(prompt, {
-        temperature: attempt === 0 ? 0.35 : 0.2,
-      });
-      const paper = parsePaper(text);
-      return NextResponse.json({ paper, totalTokens });
-    } catch (err) {
-      if (err instanceof GeminiError) {
-        if (err.code === "NO_KEY") {
-          return NextResponse.json({ error: err.message, code: err.code }, { status: 500 });
-        }
-        // Overload / rate-limit / timeout: the model chain was momentarily
-        // busy. Surface a calm, actionable message rather than a raw HTTP code.
-        const busy =
-          err.code === "RATE_LIMIT" || err.code === "TIMEOUT" || err.status === 503;
-        return NextResponse.json(
-          {
-            error: busy
-              ? "The AI is briefly overloaded with demand. Please click Generate again — it usually clears within a few seconds."
-              : err.message,
-            code: err.code,
-          },
-          { status: busy ? 503 : 502 }
-        );
+  // Single bounded pass: geminiGenerateJson() already fails over flash -> lite
+  // internally, and parsePaper() repairs the under-escaped LaTeX that the fast
+  // (thinking-off) model can emit. No outer retry — that's what compounded past
+  // Vercel's 60s limit and produced 504s.
+  try {
+    const { text, totalTokens, model } = await geminiGenerateJson(prompt, {
+      temperature: 0.35,
+    });
+    const paper = parsePaper(text);
+    return NextResponse.json({ paper, totalTokens, model });
+  } catch (err) {
+    if (err instanceof GeminiError) {
+      if (err.code === "NO_KEY") {
+        return NextResponse.json({ error: err.message, code: err.code }, { status: 500 });
       }
-      // SyntaxError / bad-shape — retry once, then give up.
-      lastParseErr = err;
+      // Overload / quota / timeout: the model chain was momentarily unavailable.
+      const busy =
+        err.code === "RATE_LIMIT" || err.code === "TIMEOUT" || err.status === 503;
+      return NextResponse.json(
+        {
+          error: busy
+            ? "The AI is busy right now (high demand or rate limit). Please click Generate again in a few seconds."
+            : err.message,
+          code: err.code,
+        },
+        { status: busy ? 503 : 502 }
+      );
     }
+    // Parse/shape failure even after repair — rare. Ask the user to retry.
+    console.error("[generate] parse failed:", err);
+    return NextResponse.json(
+      { error: "The model returned a malformed paper. Please click Generate again." },
+      { status: 502 }
+    );
   }
-
-  console.error("[generate] parse failed after retry:", lastParseErr);
-  return NextResponse.json(
-    { error: "The model returned a malformed paper. Please try again." },
-    { status: 502 }
-  );
 }

@@ -32,9 +32,27 @@ export default function Home() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ brief }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Generation failed");
-      setPaper(data.paper as GeneratedPaper);
+
+      // The response isn't always JSON: a platform timeout (504) returns an
+      // HTML error page. Read text first and parse defensively so the user
+      // gets a clean message instead of a raw "Unexpected token" error.
+      const raw = await res.text();
+      let data: { paper?: GeneratedPaper; error?: string } = {};
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = {
+          error:
+            res.status === 504
+              ? "That took too long and timed out. Try a smaller paper, or click Generate again."
+              : "The server hit an unexpected error. Please click Generate again.",
+        };
+      }
+
+      if (!res.ok || !data.paper) {
+        throw new Error(data.error ?? "Generation failed — please try again.");
+      }
+      setPaper(data.paper);
     } catch (e) {
       setError((e as Error).message);
     } finally {
