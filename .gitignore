@@ -1,0 +1,13 @@
+/node_modules
+/.next
+/out
+/build
+.env*.local
+.DS_Store
+*.tsbuildinfo
+next-env.d.ts
+
+# local debug artifacts
+_raw.json
+_*.mjs
+_preview.*
