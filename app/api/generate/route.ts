@@ -35,9 +35,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ paper, totalTokens });
     } catch (err) {
       if (err instanceof GeminiError) {
-        const status =
-          err.code === "NO_KEY" ? 500 : err.code === "RATE_LIMIT" ? 429 : 502;
-        return NextResponse.json({ error: err.message, code: err.code }, { status });
+        if (err.code === "NO_KEY") {
+          return NextResponse.json({ error: err.message, code: err.code }, { status: 500 });
+        }
+        // Overload / rate-limit / timeout: the model chain was momentarily
+        // busy. Surface a calm, actionable message rather than a raw HTTP code.
+        const busy =
+          err.code === "RATE_LIMIT" || err.code === "TIMEOUT" || err.status === 503;
+        return NextResponse.json(
+          {
+            error: busy
+              ? "The AI is briefly overloaded with demand. Please click Generate again — it usually clears within a few seconds."
+              : err.message,
+            code: err.code,
+          },
+          { status: busy ? 503 : 502 }
+        );
       }
       // SyntaxError / bad-shape — retry once, then give up.
       lastParseErr = err;
