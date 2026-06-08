@@ -5,10 +5,10 @@ import { PaperPreview } from "@/components/PaperPreview";
 import type { GeneratedPaper } from "@/lib/paper";
 
 const EXAMPLES = [
-  "CBSE Class 10 Maths half-yearly, 80 marks, 3 hours, 25% MCQs, heavy on Trigonometry & Quadratic Equations",
-  "ICSE Class 9 Physics unit test, 40 marks, 90 minutes, topics: Motion, Force, Work & Energy",
-  "CBSE Class 12 Chemistry, 70 marks, mix of easy/medium/hard, focus on Electrochemistry and Chemical Kinetics",
-  "Class 7 Maths practice worksheet, 30 marks, Integers and Fractions, mostly easy",
+  "CBSE Class 10 Maths unit test, 10 questions, 20 marks, Trigonometry & Quadratic Equations, 4 MCQs",
+  "ICSE Class 9 Physics quiz, 10 questions, 15 marks, Motion and Force",
+  "CBSE Class 12 Chemistry, 10 questions, 20 marks, Electrochemistry, mixed difficulty",
+  "Class 7 Maths worksheet, 10 questions, 15 marks, Integers and Fractions, mostly easy",
 ];
 
 export default function Home() {
@@ -86,7 +86,7 @@ export default function Home() {
             <textarea
               value={brief}
               onChange={(e) => setBrief(e.target.value)}
-              placeholder="e.g. CBSE Class 10 Maths half-yearly, 80 marks, 3 hours, heavy on Trigonometry and Quadratic Equations, include 20% MCQs…"
+              placeholder="e.g. CBSE Class 10 Maths unit test, 10 questions, 20 marks, Trigonometry and Quadratic Equations, include 4 MCQs…"
               rows={5}
               className="w-full resize-none rounded-xl border border-slate-300 bg-white p-4 text-[15px] shadow-sm outline-none focus:border-brand-teal focus:ring-2 focus:ring-brand-teal/20"
             />
