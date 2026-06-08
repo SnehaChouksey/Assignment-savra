@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Prompt-to-Paper — AI exam paper generator for teachers",
+  title: "Savra Question Paper Generator — AI exam papers for teachers",
   description:
     "Describe an exam in plain English and get a complete, board-ready question paper with real math, a blueprint, and an answer key — in seconds.",
 };

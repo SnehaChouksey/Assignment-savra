@@ -68,7 +68,7 @@ export default function Home() {
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-brand-teal text-white">
             ✦
           </span>
-          Prompt-to-Paper
+          Savra Question Paper Generator
         </div>
         <h1 className="mt-4 max-w-3xl text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
           Describe an exam. Get a board-ready paper with real math —{" "}

@@ -207,8 +207,8 @@ export function PaperPreview({
         ) : null}
 
         <footer className="mt-6 border-t border-slate-200 pt-2 text-center text-[10px] text-slate-400">
-          {countQuestions(paper)} questions · {total} marks · generated with
-          Prompt-to-Paper
+          {countQuestions(paper)} questions · {total} marks · Savra Question
+          Paper Generator
         </footer>
       </div>
     </div>
