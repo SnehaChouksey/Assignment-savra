@@ -29,8 +29,10 @@ export function PaperPreview({
   schoolName: string;
   showKey: boolean;
 }) {
-  const actualMarks = computeTotalMarks(paper);
-  const total = paper.total_marks || actualMarks;
+  // Use the real sum of question marks as the authoritative total so the paper
+  // is always internally consistent (header marks == sum of questions), even
+  // when a lighter fallback model drifts off the requested total.
+  const total = computeTotalMarks(paper) || paper.total_marks;
   let qNum = 0;
 
   return (
@@ -205,8 +207,7 @@ export function PaperPreview({
         ) : null}
 
         <footer className="mt-6 border-t border-slate-200 pt-2 text-center text-[10px] text-slate-400">
-          {countQuestions(paper)} questions · {actualMarks} marks
-          {actualMarks !== total ? ` (requested ${total})` : ""} · generated with
+          {countQuestions(paper)} questions · {total} marks · generated with
           Prompt-to-Paper
         </footer>
       </div>

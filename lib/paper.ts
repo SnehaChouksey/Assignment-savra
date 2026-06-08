@@ -95,13 +95,26 @@ ${SCHEMA_EXAMPLE}
 Return the JSON now.`;
 }
 
-// Gemini sometimes wraps JSON in ```json fences despite instructions — strip them.
 export function parsePaper(raw: string): GeneratedPaper {
+  // Gemini sometimes wraps JSON in ```json fences despite instructions.
   let text = raw.trim();
   if (text.startsWith("```")) {
     text = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
   }
-  const obj = JSON.parse(text) as GeneratedPaper;
+
+  let obj: GeneratedPaper;
+  try {
+    obj = JSON.parse(text) as GeneratedPaper;
+  } catch {
+    // Lighter models (the 503 failover) sometimes emit LaTeX with SINGLE
+    // backslashes — e.g. "\( \sin\theta \)" — which is invalid JSON. When the
+    // backslashes are consistently single, doubling every backslash that isn't
+    // escaping a quote turns it back into valid JSON without disturbing the
+    // already-correct quote escapes. Only runs after a normal parse fails, so
+    // it can't corrupt well-formed responses.
+    obj = JSON.parse(text.replace(/\\(?!")/g, "\\\\")) as GeneratedPaper;
+  }
+
   if (!obj || !Array.isArray(obj.sections)) {
     throw new Error("Model returned JSON without a sections array");
   }
